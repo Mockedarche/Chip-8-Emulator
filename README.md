@@ -5,6 +5,8 @@ Supports various speeds, input, sound, graphics, and with many more customizatio
 Performance wise im sure it could be faster but generally 660 instructions per second is considered real time but uncapped my M1 mac could
 run at ~330,000 instructions per second which is definitely crazy fast.
 
+Made this to get into emulators (software emulation of hardware), review on my C (forgot how much I love C) after a long period of python, and it just seemed enjoyable which it really was. 
+
 Note the makefile was included as an example of how to build it raylib is of course a requirement I used 5.5.0 for development. Other than that its all 
 standard C.
 
