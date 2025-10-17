@@ -14,161 +14,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include "raylib.h"
-#include "chip_8_emulator.h"
+#include "timing.h"
+#include "chip_8_core.h"
 #include <time.h>
 #include <sys/time.h>
 #include <stdbool.h>
 
-// Width of the CHIP-8 display
-const int chip_8_screen_width = 64;
-
-// Height of the CHIP-8 display
-const int chip_8_screen_height = 32;
-
-// Scale factor for enlarging the CHIP-8 display (for modern displays)
-const int scale_factor = 25;
-
-// Width of the emulated window
-const int emulated_screen_width = chip_8_screen_width * scale_factor;
-
-// Height of the emulated window
-const int emulated_screen_height = chip_8_screen_height * scale_factor;
-
-// CHIP-8 has 4096 bytes of memory
-const int memory_size = 4096;
-
-// Starting memory address for fonts
-#define FONT_START 0x50
-
-// Programs start at memory location 0x200 (512)
-const int rom_start_address = 0x200;
-
 // DEBUG FLAG
 const bool debug = false;
+const bool walk_through_each_instruction = false;
 
 // Flag for quirks (different emulators act slightly different this flag changes those quirks as desired)
 bool old_implementation = false;
-
-
-// Converts current time to its ms representation as a long
-unsigned long current_ms() {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (tv.tv_sec * 1000UL) + (tv.tv_usec / 1000UL);
-}
-
-
-/*
- * Custom Stack object
- * Expects top to be set to -1 on initialization
- *
- */
-typedef struct stack {
-    u16 emulated_stack_array[16];
-    int top;
-
-
-} stack;
-
-/*
- * push function
- * Expects: The emulated stack to be of size 16 and ONLY 16
- * Does: Pushes the u16 variable to the emulated stack
- *
- */
-void push (stack *emulated_stack, u16 to_push){
-    if (emulated_stack->top >= 15){
-        printf("ERROR ERROR program attempted to push to stack when stack FULL\n");
-        return;
-    }
-    else {
-        emulated_stack->top += 1;
-        emulated_stack->emulated_stack_array[emulated_stack->top] = to_push;
-    }
-
-
-}
-
-/*
- * pop function
- * Expects: Emulated stack to be initialized with a size > 0
- * Does: Pops the top of the stack and returns the u16 value
- *
- */
-u16 pop (stack *emulated_stack){
-    if (emulated_stack->top < 0){
-        printf("ERROR ERROR program attempted to pop from an EMPTY stack\n");
-        return 0;
-    }
-    else {
-        u16 temp = emulated_stack->emulated_stack_array[emulated_stack->top];
-        emulated_stack->top -= 1;
-        return temp;
-    }
-}
-
-
-/*
- * chip_8 struct
- * Expects: N/A
- * Does: Defines the structure of the CHIP-8 emulator, including memory, registers, stack, and display
- */
-typedef struct chip_8 {
-
-    // The Chip 8's memory
-    u8 memory[memory_size];
-
-    // The Chip 8's registers
-    u8 V[16];
-
-    // The chip 8's stack using an emulated one for ease of use
-    stack emulated_stack;
-
-    // Special registers
-    u16 I;
-    // Program Counter
-    u16 PC;
-    // Stack Pointer
-    u8 SP;
-    // Delay timer
-    u8 delay_register;
-    // Sound timer
-    u8 sound_register;
-
-    //SPECIAL VALUE USED FOR TIME
-    unsigned long last_update;
-
-    // The Chip 8's display (64 x 32 pixels)
-    b8 display[64 * 32];
-
-    // boolean to denote if something changed in the display_array
-    bool display_has_changed;
-
-    struct timespec when_key_last_pressed[16];
-
-
-} chip_8;
-
-/*
- * update_time_registers function
- * Exxpects: chip 8 object to be correctly initialized
- * Does: If a second has passed we decrement any timers above 0 by 1
- *
- */
-void update_time_registers(chip_8 *chip_8_object){
-   unsigned long now = current_ms();
-   if ((now - chip_8_object->last_update) > (1000.0f / 60.0f)){
-      if (chip_8_object->delay_register > 0){
-         chip_8_object->delay_register -= 1;
-      }
-      if (chip_8_object->sound_register > 0) {
-         chip_8_object->sound_register -= 1;
-      }
-
-      chip_8_object->last_update = now;
-   }
-}
-
 
 /*
  * draw_frame function
@@ -176,64 +33,21 @@ void update_time_registers(chip_8 *chip_8_object){
  * Does: Draws the current state of the CHIP-8 display to the raylib window
  *
  */
-int draw_frame(chip_8 *chip_8_object){
-
+int draw_frame(chip_8 *chip_8_object, Color *primary, Color *background){
 
     for (int i = 0; i < chip_8_screen_width; i++){
         for (int j = 0; j < chip_8_screen_height; j++){
             if (chip_8_object->display[j * chip_8_screen_width + i]){
-                DrawRectangle(i * scale_factor, j * scale_factor, scale_factor, scale_factor, GREEN);
+                DrawRectangle(i * scale_factor, j * scale_factor, scale_factor, scale_factor, *primary);
             }
             else {
-                DrawRectangle(i * scale_factor, j * scale_factor, scale_factor, scale_factor, BLACK);
+                DrawRectangle(i * scale_factor, j * scale_factor, scale_factor, scale_factor, *background);
             }
         }
     }
 
     chip_8_object->display_has_changed = false;
     return 0;
-}
-
-/*
- * print_chip_8_contents function
- * Expects: chip 8 object to be initialized correctly
- * Does: Prints out all of the chip 8's emulated hardwares contents (except memory)
- *
- */
-int print_chip_8_contents(chip_8 *chip_8_instance){
-    printf("Printing the contents of the chip 8 instance\n");
-    printf("Chip 8 Registers\n");
-    for (int i = 0; i < 16; i++){
-        printf("V[%d] = 0x%02X\n", i, chip_8_instance->V[i]);
-    }
-    printf("\n");
-    printf("Chip 8 Stack\n");
-    for (int i = 0; i < 16; i++){
-        printf("Stack[%d] = 0x%04X\n", i, chip_8_instance->emulated_stack.emulated_stack_array[i]);
-    }
-    printf("\n");
-    printf("Chip 8 Index Register\n");
-    printf("I = 0x%04X\n", chip_8_instance->I);
-    printf("Chip 8 Program Counter\n");
-    printf("PC = 0x%04X\n", chip_8_instance->PC);
-    printf("Chip 8 Stack Pointer\n");
-    printf("SP = 0x%02X\n", chip_8_instance->SP);
-
-    return 0;
-}
-
-/*
- * millis_since helper function - get_most_recent_input
- * Expects: the start timespec struct to be correctly initialized with a time
- * Does: returns how many milliseconds (int) have passed since the given timespec struct
- *
- */
-int millis_since(struct timespec start) {
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    long diff_ms = (now.tv_sec - start.tv_sec) * 1000;
-    diff_ms += (now.tv_nsec - start.tv_nsec) / 1000000;
-    return (int)diff_ms;
 }
 
 /*
@@ -258,134 +72,49 @@ u8 get_most_recent_input(chip_8 *chip_8_object) {
 }
 
 /*
- * pretty_timer function
+ * get_color_from_name function
  * Expects: NA
- * Does: Prints how long in ms it's been since this method was LAST called (using a static variable)
+ * Does: Given a string representation of a raylib defined color it returns that raylib color
  *
  */
-void pretty_timer() {
-    static struct timespec last_call = {0, 0};
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
+Color get_color_from_name(const char *color_name){
 
-    if (last_call.tv_sec == 0 && last_call.tv_nsec == 0) {
-        printf("First call, starting timer...\n");
-    } else {
-        double elapsed_ms = (now.tv_sec - last_call.tv_sec) * 1000.0 +
-                            (now.tv_nsec - last_call.tv_nsec) / 1000000.0;
-        printf("Time since last call: %.3f ms\n", elapsed_ms);
-    }
+    if (strcasecmp(color_name, "darkgray") == 0) return DARKGRAY;
+    else if (strcasecmp(color_name, "maroon") == 0) return MAROON;
+    else if (strcasecmp(color_name, "orange") == 0) return ORANGE;
+    else if (strcasecmp(color_name, "darkgreen") == 0) return DARKGREEN;
+    else if (strcasecmp(color_name, "darkblue") == 0) return DARKBLUE;
+    else if (strcasecmp(color_name, "darkpurple") == 0) return DARKPURPLE;
+    else if (strcasecmp(color_name, "darkbrown") == 0) return DARKBROWN;
+    else if (strcasecmp(color_name, "gray") == 0) return GRAY;
+    else if (strcasecmp(color_name, "red") == 0) return RED;
+    else if (strcasecmp(color_name, "gold") == 0) return GOLD;
+    else if (strcasecmp(color_name, "lime") == 0) return LIME;
+    else if (strcasecmp(color_name, "blue") == 0) return BLUE;
+    else if (strcasecmp(color_name, "violet") == 0) return VIOLET;
+    else if (strcasecmp(color_name, "brown") == 0) return BROWN;
+    else if (strcasecmp(color_name, "lightgray") == 0) return LIGHTGRAY;
+    else if (strcasecmp(color_name, "pink") == 0) return PINK;
+    else if (strcasecmp(color_name, "yellow") == 0) return YELLOW;
+    else if (strcasecmp(color_name, "green") == 0) return GREEN;
+    else if (strcasecmp(color_name, "skyblue") == 0) return SKYBLUE;
+    else if (strcasecmp(color_name, "purple") == 0) return PURPLE;
+    else if (strcasecmp(color_name, "beige") == 0) return BEIGE;
+    else if (strcasecmp(color_name, "black") == 0) return BLACK;
+    return WHITE;
 
-    last_call = now;
+
 }
-
-/*
- * sleep_for_instruction function
- * Expects: time_per_instruction_ms to be a valid float
- * Does: Accounts for the entire time since it was last called (minus time it slept) and sleeps for a delta
- * time that accounts for variance
- */
-void sleep_for_instruction(float time_per_instruction_ms) {
-    static struct timespec last_time = {0, 0};
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-
-    if (last_time.tv_sec == 0 && last_time.tv_nsec == 0) {
-        last_time = now;  // first call
-    }
-
-    long elapsed_ns = (now.tv_sec - last_time.tv_sec) * 1000000000L
-                    + (now.tv_nsec - last_time.tv_nsec);
-
-    long target_ns = (long)(time_per_instruction_ms * 1000000L);
-    long sleep_ns = target_ns - elapsed_ns;
-
-    if (sleep_ns > 0) {
-        struct timespec ts;
-        ts.tv_sec = sleep_ns / 1000000000L;
-        ts.tv_nsec = sleep_ns % 1000000000L;
-        nanosleep(&ts, NULL);
-    }
-
-    clock_gettime(CLOCK_MONOTONIC, &last_time);
-}
-
-/*
- * make_future_time function
- * Expects: ms to be a valid double
- * Does: Returns a struct timespec that has its time offset by the provided ms (milliseconds)
- */
-struct timespec make_future_time(double ms) {
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-
-    long ns_to_add = (long)(ms * 1000000.0);
-    t.tv_nsec += ns_to_add;
-    if (t.tv_nsec >= 1000000000) {
-        t.tv_sec += t.tv_nsec / 1000000000;
-        t.tv_nsec %= 1000000000;
-    }
-    return t;
-}
-
-/*
- * time_has_passed function
- * Expects: *time should be correctly initialized
- * Does: Returns true if targets time has passed else returns false
- *
- */
-bool time_has_passed(struct timespec *target) {
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-
-    if (now.tv_sec > target->tv_sec) return true;
-    if (now.tv_sec == target->tv_sec && now.tv_nsec >= target->tv_nsec) return true;
-    return false;
-}
-
-/*
- * track_instruction function
- * Expects: NA
- * Does: Counts how many times its called per second and prints that out every second
- * as instructions per second
- *
- */
-void track_instructions() {
-    static int instruction_count = 0;
-    static struct timespec last_time = {0};
-
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-
-    if (last_time.tv_sec == 0) last_time = now; // init first call
-
-    instruction_count++;
-
-    double elapsed = (now.tv_sec - last_time.tv_sec) +
-                     (now.tv_nsec - last_time.tv_nsec) / 1e9;
-
-    if (elapsed >= 1.0) {
-        printf("Instructions per second: %d\n", instruction_count);
-        instruction_count = 0;
-        last_time = now;
-    }
-}
-
-
 
 /*
  * main function
  * Expects: one argument: path to the CHIP-8 ROM file
  * Does: Initializes the CHIP-8 emulator, loads the ROM into memory, and starts the emulation loop.
+ *
  */
 int main(int argc, const char * argv[]) {
 
-    // Init the window and audio device
-    InitWindow(emulated_screen_width, emulated_screen_height, "CHIP-8 Emulator");
-    InitAudioDevice();
-
-    // Load sound file for our chip 8's emulated sound
-    Sound beep = LoadSound("beep.wav");
+    /* Set up variables for emulation such as arguments */
 
     // Declare and init our chip_8 struct (blanking it to 0 to prevent bad data)
     chip_8 chip_8_instance;
@@ -397,23 +126,93 @@ int main(int argc, const char * argv[]) {
     chip_8_instance.last_update = current_ms();
     // Point out program counter to where the rom starts
     chip_8_instance.PC = 0x200;
+
+    // Argument validation
+    if(argc < 2) {
+        printf("No arguments provided.\n");
+        return 1;
+    }
+    else if ((strcmp(argv[1], "-help") == 0) || (strcmp(argv[1], "-h") == 0)) {
+        printf("Expected behavior is ./chip_8_emulator arguments path_to_ch8_rom\n");
+        printf("arguments are -BGCOLOR = any raylib color, -PCOLOR = any raylib color\n");
+        printf("-SPEED=float, \n");
+        printf("Available colors are: darkgray, maroon, orange, darkgreen, darkblue, darkpurple, darkbrown, ");
+        printf("gray, red, gold, lime, blue, violet, brown, lightgray, pink, yellow, green, skyblue, purple, beige, black, white\n");
+
+        return 0;
+    }
+    printf("Number of args: %d\n", argc);
+    for (int i = 0; i < argc; i++) {
+        printf("Arg %d: %s\n", i, argv[i]);
+    }
+
+    // Declare and init background and primary Color with defaults
+    Color background;
+    Color primary;
+    float speed_scaler;
+    speed_scaler = 1.0f;
+    background = WHITE;
+    primary = BLACK;
+
+    // If a color was provided we set it as requested
+    for (int i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "-BGCOLOR=", 9) == 0) {
+            background = get_color_from_name(argv[i] + 9);
+            printf("Background color: %s\n", argv[i] + 9);
+        }
+        else if (strncmp(argv[i], "-PCOLOR=", 8) == 0) {
+            primary = get_color_from_name(argv[i] + 8);
+            printf("Primary color: %s\n", argv[i] + 8);
+        }
+        else if (strncmp(argv[i], "-SPEED=", 7) == 0) {
+            const char *value_str = argv[i] + 7;  // skip "-SPEED="
+
+            char *endptr;
+            float value = strtof(value_str, &endptr);
+
+            if (*endptr != '\0') {
+                printf("Error: -SPEED must be a valid number.\n");
+                return 1;
+            }
+
+            if (value <= 0.0f) {
+                printf("Error: -SPEED must be positive.\n");
+                return 1;
+            }
+
+            speed_scaler = value;
+            printf("Speed set to %.2f\n", speed_scaler);
+        }
+    }
+
+    // last argument should always be path to chip 8 rom
+    FILE *rom = fopen(argv[argc-1], "rb");
+    if (!rom) {
+        printf("Failed to open ROM file: %s\n", argv[argc-1]);
+        return 1;
+    }
+
+    // Read in the rom to memory and set how many bytes were written into this variable
+    size_t bytes_read = fread(&chip_8_instance.memory[rom_start_address], 1, memory_size - rom_start_address, rom);
+    fclose(rom);
+
+    // Init the window and audio device
+    InitWindow(emulated_screen_width, emulated_screen_height, "CHIP-8 Emulator");
+    InitAudioDevice();
+
+    // Load sound file for our chip 8's emulated sound
+    Sound beep = LoadSound("beep.wav");
+
     // Variable used to hold the next read instruction from memory
     unsigned short instruction;
     // Temporary variable used to work on instructions
     u8 temporary_u8;
-    // Variable used to count ran instructions ()
-    int instruction_count;
-    // Init our instruction count to 0
-    instruction_count = 0;
-    // Variable used to count how many frames have been drawn
-    int frame_count;
-    // Init our frame count to 0
-    frame_count = 0;
+
+    // Holds the instructions per second
+    int instructions_performed_last_second;
 
     // Variable used to hold whatever key has been pressed
     u8 current_key_pressed;
-    // Temp variable used in handling key inputs
-    u8 temp_key_hold;
 
     // timespec variable used to hold WHEN we should draw our NEXT frame
     struct timespec when_next_frame;
@@ -422,7 +221,7 @@ int main(int argc, const char * argv[]) {
 
     // Init all input keys as if they were pressed 1000 seconds ago
     for (int i = 0; i < 16; i++){
-        // make it “old” so it won’t trigger again until pressed again
+        // make it “old” so it won’t trigger again until pressed
         chip_8_instance.when_key_last_pressed[i].tv_sec -= 1000; // 1000s ago
 
     }
@@ -436,16 +235,13 @@ int main(int argc, const char * argv[]) {
 
     // Variables to control how much time between each instructions given a 660 as realtime with
     // a scaler if we want to run faster than realtime
-    float speed_scaler = 1.0f;
     float instruction_per_second = speed_scaler * 660.0f;
     float time_per_instruction_ms =  1000.0f / instruction_per_second;
-    long time_to_sleep = (long)(time_per_instruction_ms * 1000000L);
 
-    // timespect variable used for when sleeping
-    struct timespec ts;
-    ts.tv_sec = 0;
-    ts.tv_nsec = (long)(time_per_instruction_ms * 1000000L);
-
+    // float used to adjust instruction timing to be closer to our goal ips
+    float adjustment_ratio;
+    // Since code execution (emulator), chip 8 execution, and inaccuracy of sleep we give some wiggle room
+    time_per_instruction_ms += ((float)time_per_instruction_ms * -.15);
 
     // Variable used to hold our fonts
     u8 fonts[16][5] = {
@@ -473,47 +269,29 @@ int main(int argc, const char * argv[]) {
         }
     }
 
-
-    // Debug for arguments provided
-    if(argc < 2) {
-        printf("No arguments provided.\n");
-        return 1;
-    }
-    else if ((strcmp(argv[1], "-help") == 0) || (strcmp(argv[1], "-h") == 0)) {
-        printf("Expected behavior is ./chip_8_emulator path_to_ch8_rom\n");
-        return 0;
-    }
-    printf("Number of args: %d\n", argc);
-    for (int i = 0; i < argc; i++) {
-        printf("Arg %d: %s\n", i, argv[i]);
-    }
-
-    // Open the provided rom file
-    FILE *rom = fopen(argv[1], "rb");
-    if (rom == NULL) {
-        printf("Failed to open ROM file: %s\n", argv[1]);
-        return 1;
-    }
-
-    // Read in the rom to memory and set how many bytes were written into this variable
-    size_t bytes_read = fread(&chip_8_instance.memory[rom_start_address], 1, memory_size - rom_start_address, rom);
-    fclose(rom);
+    /* Set up our graphics */
 
     // Init the window with a black background
     BeginDrawing();
-    ClearBackground(BLACK);
+    ClearBackground(background);
     EndDrawing();
+
+    /* Start emulation loop */
 
     // While we haven't read all of the ROM
     while(chip_8_instance.PC < (rom_start_address + bytes_read)) {
+
+        /* Fetch instruction */
 
         // Get the next instruction and increment out PC by 2 (2 byte instruction size)
         instruction = (chip_8_instance.memory[chip_8_instance.PC] << 8) | chip_8_instance.memory[chip_8_instance.PC + 1];
         chip_8_instance.PC += 2;
 
         // Debug statements
-        //printf("On instruction: 0x%04X\n", chip_8_instance.PC);
-        //printf("0x%04X\n", instruction);
+        if (debug){
+            printf("On instruction: 0x%04X\n", chip_8_instance.PC);
+            printf("0x%04X\n", instruction);
+        }
 
         // If our time register is not 0 and we aren't currently playing a sound then we do play a sound
         if ((chip_8_instance.sound_register > 0) && (!IsSoundPlaying(beep))){
@@ -524,6 +302,8 @@ int main(int argc, const char * argv[]) {
             StopSound(beep);
         }
 
+        /* Decode instructions and execute it */
+
         // Switch case for the instruction we grab the first hex value of the 2 byte instruction
         switch ((instruction & 0xF000) >> 12){
             // Cases for 0x0
@@ -533,13 +313,18 @@ int main(int argc, const char * argv[]) {
                     // Clear the display
                     case 0xE0:
                         memset(chip_8_instance.display, 0, sizeof(chip_8_instance.display));
-                        //printf("Clear the display\n");
+                        chip_8_instance.display_has_changed = true;
+                        if (debug) {
+                            printf("Clear the display\n");
+                        }
                         break;
 
                     // Need to return from subroutine AKA pop stack and make it the PC
                     case 0xEE:
                         chip_8_instance.PC = pop(&chip_8_instance.emulated_stack);
-                        //printf("Returing from subroutine to 0x%04X\n", chip_8_instance.PC);
+                        if (debug){
+                            printf("Returing from subroutine to 0x%04X\n", chip_8_instance.PC);
+                        }
                         break;
 
                 }
@@ -548,14 +333,18 @@ int main(int argc, const char * argv[]) {
             // Jump to address NNN
             case 0x1:
                 chip_8_instance.PC = instruction & 0x0FFF;
-                //printf("Jump to address 0x%04X\n", chip_8_instance.PC);
+                if (debug){
+                    printf("Jump to address 0x%04X\n", chip_8_instance.PC);
+                }
                 break;
 
             // this case we actually do a call of the subroutine
             case 0x2:
                 push(&chip_8_instance.emulated_stack, chip_8_instance.PC);
                 chip_8_instance.PC = instruction & 0x0FFF;
-                //printf("Call address 0x%04X\n", chip_8_instance.PC);
+                if (debug){
+                    printf("Call address 0x%04X\n", chip_8_instance.PC);
+                }
                 break;
 
             // Skip 1 instruction if the value of Vx is equal to NN
@@ -563,7 +352,9 @@ int main(int argc, const char * argv[]) {
                 if (chip_8_instance.V[(instruction & 0x0F00) >> 8] == (instruction & 0x00FF)){
                     chip_8_instance.PC += 2;
                 }
-                //printf("Checked if 0x%02X is equal to 0x%02X\n", chip_8_instance.V[(instruction & 0x0F00) >> 8], instruction & 0x00FF);
+                if (debug){
+                    printf("Checked if 0x%02X is equal to 0x%02X\n", chip_8_instance.V[(instruction & 0x0F00) >> 8], instruction & 0x00FF);
+                }
                 break;
 
             // Skip 1 instruction if the value Vx is not equal to NN
@@ -571,7 +362,9 @@ int main(int argc, const char * argv[]) {
                 if (chip_8_instance.V[(instruction & 0x0F00) >> 8] != (instruction & 0x00FF)){
                     chip_8_instance.PC += 2;
                 }
-                //printf("Checked if 0x%02X is not equal to 0x%02X\n", chip_8_instance.V[(instruction & 0x0F00) >> 8], instruction & 0x00FF);
+                if (debug){
+                    printf("Checked if 0x%02X is not equal to 0x%02X\n", chip_8_instance.V[(instruction & 0x0F00) >> 8], instruction & 0x00FF);
+                }
                 break;
 
             // Skip 1 instruction if Vx and Vy are equal
@@ -579,19 +372,25 @@ int main(int argc, const char * argv[]) {
                 if (chip_8_instance.V[(instruction & 0x0F00) >> 8] == chip_8_instance.V[(instruction & 0x00F0) >> 4]){
                     chip_8_instance.PC += 2;
                 }
-                //printf("Checked if V[%d] = 0x%02X is equal to V[%d] = 0x%02X\n", ((instruction & 0x0F00) >> 8), chip_8_instance.V[(instruction & 0x0F00) >> 8], ((instruction & 0x00F0) >> 4), chip_8_instance.V[(instruction & 0x00F0) >> 4]);
+                if (debug){
+                    printf("Checked if V[%d] = 0x%02X is equal to V[%d] = 0x%02X\n", ((instruction & 0x0F00) >> 8), chip_8_instance.V[(instruction & 0x0F00) >> 8], ((instruction & 0x00F0) >> 4), chip_8_instance.V[(instruction & 0x00F0) >> 4]);
+                }
                 break;
 
             // Set Vx to NN
             case 0x6:
                 chip_8_instance.V[(instruction & 0x0F00) >> 8] = instruction & 0x00FF;
-                //printf("Set V[%d] to 0x%02X\n", (instruction & 0x0F00) >> 8, instruction & 0x00FF);
+                if (debug){
+                    printf("Set V[%d] to 0x%02X\n", (instruction & 0x0F00) >> 8, instruction & 0x00FF);
+                }
                 break;
 
             // Add NN to Vx (without carry) and without changing the carry flag
             case 0x7:
                 chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x0F00) >> 8] + (instruction & 0x00FF);
-                //printf("Add 0x%02X to V[%d], result: 0x%02X\n", instruction & 0x00FF, (instruction & 0x0F00) >> 8, chip_8_instance.V[(instruction & 0x0F00) >> 8]);
+                if (debug){
+                    printf("Add 0x%02X to V[%d], result: 0x%02X\n", instruction & 0x00FF, (instruction & 0x0F00) >> 8, chip_8_instance.V[(instruction & 0x0F00) >> 8]);
+                }
                 break;
 
             // 0x8 is used for a lot of logical and arthmetic instructions so we switch for each
@@ -600,25 +399,33 @@ int main(int argc, const char * argv[]) {
                     // Binary Set operation
                     case 0x0:
                         chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x00F0) >> 4];
-                        //printf("Set V[%d] to equal V[%d]\n", ((instruction & 0x0F00) >> 8), ((instruction & 0x00F0) >> 4));
+                        if (debug){
+                            printf("Set V[%d] to equal V[%d]\n", ((instruction & 0x0F00) >> 8), ((instruction & 0x00F0) >> 4));
+                        }
                         break;
 
                     // Binary Or operation
                     case 0x1:
                         chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x0F00) >> 8] | chip_8_instance.V[(instruction & 0x00F0) >> 4];
-                        //printf("Set V[%d] to the or operation of V[%d] | V[%d]\n", ((instruction & 0x0F00) >> 8), ((instruction & 0x0F00) >> 8), ((instruction & 0x00F0) >> 4));
+                        if (debug){
+                            printf("Set V[%d] to the or operation of V[%d] | V[%d]\n", ((instruction & 0x0F00) >> 8), ((instruction & 0x0F00) >> 8), ((instruction & 0x00F0) >> 4));
+                        }
                         break;
 
                     // Binary And operation
                     case 0x2:
                         chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x0F00) >> 8] & chip_8_instance.V[(instruction & 0x00F0) >> 4];
-                        //printf("Set V[%d] to the and operation of V[%d] & V[%d]\n", ((instruction & 0x0F00) >> 8), ((instruction & 0x0F00) >> 8), ((instruction & 0x00F0) >> 4));
+                        if (debug){
+                            printf("Set V[%d] to the and operation of V[%d] & V[%d]\n", ((instruction & 0x0F00) >> 8), ((instruction & 0x0F00) >> 8), ((instruction & 0x00F0) >> 4));
+                        }
                         break;
 
                     // Binary XOR operation
                     case 0x3:
                         chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x0F00) >> 8] ^ chip_8_instance.V[(instruction & 0x00F0) >> 4];
-                        //printf("Set V[%d] to the XOR operation of V[%d] ^ V[%d]\n", ((instruction & 0x0F00) >> 8), ((instruction & 0x0F00) >> 8), ((instruction & 0x00F0) >> 4));
+                        if (debug){
+                            printf("Set V[%d] to the XOR operation of V[%d] ^ V[%d]\n", ((instruction & 0x0F00) >> 8), ((instruction & 0x0F00) >> 8), ((instruction & 0x00F0) >> 4));
+                        }
                         break;
 
                     // Binary addition of registers V[x] and V[y] with overflow setting VF to 1 ELSE its set to 0
@@ -630,6 +437,9 @@ int main(int argc, const char * argv[]) {
                         else {
                             chip_8_instance.V[(instruction & 0x0F00) >> 8] = (chip_8_instance.V[(instruction & 0x0F00) >> 8] + chip_8_instance.V[(instruction & 0x00F0) >> 4]);
                             chip_8_instance.V[15] = 0;
+                        }
+                        if (debug){
+                            printf("Added V[%d] with V[%d] placed in V[%d] did overflow: %s\n", (instruction & 0x0F00) >> 8, (instruction & 0x00F0) >> 4, (instruction & 0x0F00) >> 8, (chip_8_instance.V[15] == 1) ? "True" : "False");
                         }
                         break;
 
@@ -643,6 +453,9 @@ int main(int argc, const char * argv[]) {
                         }
                         chip_8_instance.V[(instruction & 0x0F00) >> 8] -= chip_8_instance.V[(instruction & 0x00F0) >> 4];
                         chip_8_instance.V[15] = temporary_u8;
+                        if (debug){
+                            printf("Substracted V[%d] from V[%d] placed in V[%d] carry flag: %s\n", (instruction & 0x00F0) >> 4, (instruction & 0x0F00) >> 8, (instruction & 0x0F00) >> 8, (chip_8_instance.V[15] == 1) ? "1" : "0");
+                        }
                         break;
 
                     // 8XY7 - VX = VY - VX, VF = NOT borrow
@@ -655,6 +468,9 @@ int main(int argc, const char * argv[]) {
                         }
                         chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x00F0) >> 4] - chip_8_instance.V[(instruction & 0x0F00) >> 8];
                         chip_8_instance.V[15] = temporary_u8;
+                        if (debug){
+                            printf("Substracted V[%d] from V[%d] placed in V[%d] carry flag: %s\n", (instruction & 0x0F00) >> 8, (instruction & 0x00F0) >> 4, (instruction & 0x0F00) >> 8, (chip_8_instance.V[15] == 1) ? "1" : "0");
+                        }
                         break;
 
                     // Shift V[X] by 1 bit (right) if the bit shifted out was 1 set V[F] to 1 else set it to 0
@@ -748,6 +564,7 @@ int main(int argc, const char * argv[]) {
                     }
 
                 }
+                chip_8_instance.display_has_changed = true;
                 break;
 
             // Cases for input (that aren't blocking)
@@ -847,16 +664,18 @@ int main(int argc, const char * argv[]) {
         }
 
         // Debug controller that takes input for each instruction to allow instruction by instruction debugging
-        if (debug){
+        if (walk_through_each_instruction){
             printf("Enter a command: ");
             fgets(input, sizeof(input), stdin);
 
-            // remove newline if present
+            // Remove newline if present
             input[strcspn(input, "\n")] = 0;
 
+            // If the user just hit enter
             if (input[0] == '\0'){
-                continue;
+
             }
+            // The user gave some command
             else{
                 if (strcmp(input, "print") == 0){
                     print_chip_8_contents(&chip_8_instance);
@@ -866,24 +685,23 @@ int main(int argc, const char * argv[]) {
 
          }
 
-         // increment our instruction count
-         instruction_count = instruction_count + 1;
-
          // Update the time registers (decrement if its been 1/60 of a second)
          update_time_registers(&chip_8_instance);
+
+         /* Draw our frame if its time */
 
          // If it's time to print a frame print the frame and reset our instruction count
          if (time_has_passed(&when_next_frame)){
             // Prep buffer for editing
             BeginDrawing();
-            draw_frame(&chip_8_instance);
+            draw_frame(&chip_8_instance, &primary, &background);
             // Draw the edited buffer to the screen
             EndDrawing();
             // Update for when we should print another frame
             when_next_frame = make_future_time(16.6667);
-            // Reset instruction count
-            instruction_count = 0;
          }
+
+         /* Get inputs from the user */
 
          // Get what keys are pressed and set out timespec array for each character with when/if it was pressed
          PollInputEvents();
@@ -907,21 +725,39 @@ int main(int argc, const char * argv[]) {
          if (IsKeyDown(KEY_C))      clock_gettime(CLOCK_MONOTONIC, &chip_8_instance.when_key_last_pressed[0xB]);
          if (IsKeyDown(KEY_V))      clock_gettime(CLOCK_MONOTONIC, &chip_8_instance.when_key_last_pressed[0xF]);
 
-         //pretty_timer();
-         // track this instruction
-         track_instructions();
-         //printf("%ld\n", time_to_sleep);
+         /* Keep track of instruction speed and adjust as necessary */
+
+         // track this instruction (if its been a second we get a print out of how many instructions we did in that second)
+         instructions_performed_last_second = track_instructions();
+
+         // Adjust how long we sleep in accordance with how many instructions we want to do vs what we actually did
+         if (instructions_performed_last_second > 0 && !debug) {
+             adjustment_ratio = instruction_per_second / (float)instructions_performed_last_second;
+
+             // If debug is on we print our target instructions per second as value and ratio
+             if (debug){
+                 printf("Target instructions per second: %f\n", instruction_per_second);
+                 printf("Ratio: %f\n", adjustment_ratio);
+             }
+
+             // Get how far we are off as a value
+             adjustment_ratio -= 1.0;
+             // Adjust how long we should sleep to we're closer to our target instructions per second
+             time_per_instruction_ms += (time_per_instruction_ms * (adjustment_ratio * -1));
+
+         }
+
+         /* Sleep till next instruction using delta time */
+
          // Sleep with delta time
          sleep_for_instruction(time_per_instruction_ms);
-
-
 
     }
 
     // Clean up
     // unload our beep audio file
     UnloadSound(beep);
-    // Close the audio file
+    // Close the audio device
     CloseAudioDevice();
     // Close the window
     CloseWindow();

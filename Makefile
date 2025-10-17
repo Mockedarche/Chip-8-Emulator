@@ -6,7 +6,7 @@ TARGET = chip_8_emulator
 all: $(TARGET)
 
 $(TARGET): chip_8_emulator.c
-	$(CC) chip_8_emulator.c -o $(TARGET) $(CFLAGS) $(LDFLAGS)
+	$(CC) chip_8_emulator.c chip_8_core.c timing.c -o $(TARGET) $(CFLAGS) $(LDFLAGS)
 
 clean:
 	rm -f $(TARGET)
