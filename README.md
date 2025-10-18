@@ -16,6 +16,9 @@ to test the emulator for accuracy and quirks
 IBM test (bit accurate) with various colors
 ![](https://github.com/Mockedarche/Chip-8-Emulator/blob/main/Media/color_example.gif?raw=true)
 
+Corax + opcode test (all passed)
+![](https://github.com/Mockedarche/Chip-8-Emulator/blob/main/Media/Corax+opcode_test.png?raw=true)
+
 Flags test (all passed)
 ![](https://github.com/Mockedarche/Chip-8-Emulator/blob/main/Media/flags_test.png?raw=true)
 
