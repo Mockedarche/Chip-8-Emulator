@@ -28,6 +28,6 @@ Input test (correctly gets input)
 Quirks test (none failed on or off just indicates behavior)
 ![](https://github.com/Mockedarche/Chip-8-Emulator/blob/main/Media/quirks_test.png?raw=true)
 
-Gif of [chip 8 rom](https://johnearnest.github.io/chip8Archive/play.html?p=1dcell) Running at roughly 10x real time speed
+Gif of [chip 8 rom](https://johnearnest.github.io/chip8Archive/play.html?p=1dcell) Running at 10x real time speed
 ![](https://github.com/Mockedarche/Chip-8-Emulator/blob/main/Media/10Xrealtime.gif?raw=true)
 
