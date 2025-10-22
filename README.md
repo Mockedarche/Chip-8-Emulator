@@ -4,7 +4,7 @@ Supports custom speed, input, sound, graphics (with customization for scale and 
 
 with all the features done and even quirks customizable for the given rom this project is considered launch. It's fully functional, cusotmizable, stable, and most bugs have been caught and fixed (as much as I can find playing various games). 
 
-Tested on M1 mac running macos taho 26.01
+Tested on M1 mac running macos tahoe 26.01
 Note the makefile was included as an example of how to build it raylib is of course a requirement I used 5.5.0 for development. Other than that its all standard C.
 
 Help menu 
