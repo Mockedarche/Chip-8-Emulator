@@ -10,15 +10,6 @@ const int chip_8_screen_width = 64;
 // Height of the CHIP-8 display
 const int chip_8_screen_height = 32;
 
-// Scale factor for enlarging the CHIP-8 display (for modern displays)
-const int scale_factor = 25;
-
-// Width of the emulated window
-const int emulated_screen_width = chip_8_screen_width * scale_factor;
-
-// Height of the emulated window
-const int emulated_screen_height = chip_8_screen_height * scale_factor;
-
 // CHIP-8 has 4096 bytes of memory
 const int memory_size = 4096;
 
@@ -61,6 +52,7 @@ u16 pop (stack *emulated_stack){
         emulated_stack->top -= 1;
         return temp;
     }
+
 }
 
 /*
@@ -78,9 +70,13 @@ void update_time_registers(chip_8 *chip_8_object){
       if (chip_8_object->sound_register > 0) {
          chip_8_object->sound_register -= 1;
       }
+      if (chip_8_object->display_wait_timer > 0){
+          chip_8_object->display_wait_timer -= 1;
+      }
 
       chip_8_object->last_update = now;
    }
+
 }
 
 /*
@@ -109,4 +105,5 @@ int print_chip_8_contents(chip_8 *chip_8_instance){
     printf("SP = 0x%02X\n", chip_8_instance->SP);
 
     return 0;
+
 }

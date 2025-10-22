@@ -13,15 +13,6 @@ extern const int chip_8_screen_width;
 // Height of the CHIP-8 display
 extern const int chip_8_screen_height;
 
-// Scale factor for enlarging the CHIP-8 display (for modern displays)
-extern const int scale_factor;
-
-// Width of the emulated window
-extern const int emulated_screen_width;
-
-// Height of the emulated window
-extern const int emulated_screen_height;
-
 // CHIP-8 has 4096 bytes of memory
 extern const int memory_size;
 
@@ -85,6 +76,9 @@ typedef struct chip_8 {
     u8 delay_register;
     // Sound timer
     u8 sound_register;
+
+    // display wait timer used to emulate the chip 8s display wait quirk
+    u8 display_wait_timer;
 
     //SPECIAL VALUE USED FOR TIME
     unsigned long last_update;

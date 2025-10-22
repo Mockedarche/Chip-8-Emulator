@@ -21,11 +21,21 @@
 #include <stdbool.h>
 
 // DEBUG FLAG
-const bool debug = false;
-const bool walk_through_each_instruction = false;
+bool debug = false;
+bool walk_through_each_instruction = false;
 
-// Flag for quirks (different emulators act slightly different this flag changes those quirks as desired)
-bool old_implementation = false;
+// Flag for flag register to be reset by 8xy1, 8xy2, 8xy3
+bool vf_reset_quirk = true;
+// Flag for Fx55 and Fx65 to increment index register
+bool memory_quirk = true;
+// Flag for capping drawing sprites to 60hz (simplification)
+bool display_wait_quirk = true;
+// Flag to enable sprites to clip instead of wrap
+bool clipping_quirk = true;
+// Flag for 8xy6 and 8xyE to shift V[y] placed into V[x] or just shift V[x] inplace
+bool shifting_quirk = false;
+// Flag for 1nnn to jump to nnn + V[n top nibble] + nnn or nnn + V[0]
+bool jumping_quirk = false;
 
 /*
  * draw_frame function
@@ -33,7 +43,7 @@ bool old_implementation = false;
  * Does: Draws the current state of the CHIP-8 display to the raylib window
  *
  */
-int draw_frame(chip_8 *chip_8_object, Color *primary, Color *background){
+int draw_frame(chip_8 *chip_8_object, int scale_factor, Color *primary, Color *background){
 
     for (int i = 0; i < chip_8_screen_width; i++){
         for (int j = 0; j < chip_8_screen_height; j++){
@@ -48,6 +58,7 @@ int draw_frame(chip_8 *chip_8_object, Color *primary, Color *background){
 
     chip_8_object->display_has_changed = false;
     return 0;
+
 }
 
 /*
@@ -57,8 +68,10 @@ int draw_frame(chip_8 *chip_8_object, Color *primary, Color *background){
  *
  */
 u8 get_most_recent_input(chip_8 *chip_8_object) {
-    int most_recent_age = 200; // max age in ms
-    u8 recent_key = 0xFF;        // default if no key is recent
+    // max age in ms
+    int most_recent_age = 20;
+    // default if no key is recent
+    u8 recent_key = 0xFF;
     struct timespec temp;
 
     for (int i = 0; i < 16; i++) {
@@ -69,6 +82,7 @@ u8 get_most_recent_input(chip_8 *chip_8_object) {
         }
     }
     return recent_key;
+
 }
 
 /*
@@ -79,6 +93,7 @@ u8 get_most_recent_input(chip_8 *chip_8_object) {
  */
 Color get_color_from_name(const char *color_name){
 
+    // Assuming user gave a recognized color return its Color type representation default to white
     if (strcasecmp(color_name, "darkgray") == 0) return DARKGRAY;
     else if (strcasecmp(color_name, "maroon") == 0) return MAROON;
     else if (strcasecmp(color_name, "orange") == 0) return ORANGE;
@@ -102,7 +117,6 @@ Color get_color_from_name(const char *color_name){
     else if (strcasecmp(color_name, "beige") == 0) return BEIGE;
     else if (strcasecmp(color_name, "black") == 0) return BLACK;
     return WHITE;
-
 
 }
 
@@ -132,57 +146,225 @@ int main(int argc, const char * argv[]) {
         printf("No arguments provided.\n");
         return 1;
     }
+    // If user requested help for input we print how arguments should be passed
     else if ((strcmp(argv[1], "-help") == 0) || (strcmp(argv[1], "-h") == 0)) {
         printf("Expected behavior is ./chip_8_emulator arguments path_to_ch8_rom\n");
         printf("arguments are -BGCOLOR = any raylib color, -PCOLOR = any raylib color\n");
-        printf("-SPEED=float, \n");
+        printf("-SPEED=float, -SCALE_FACTOR=int, -debug=bool, -walkthrough=bool \n");
+        printf("-vf_reset=bool, -memory_quirk=bool, -display_wait=bool, -clipping_quirk=bool, shifting_quirk=bool, -jumping_quirk=bool\n");
         printf("Available colors are: darkgray, maroon, orange, darkgreen, darkblue, darkpurple, darkbrown, ");
         printf("gray, red, gold, lime, blue, violet, brown, lightgray, pink, yellow, green, skyblue, purple, beige, black, white\n");
 
         return 0;
     }
-    printf("Number of args: %d\n", argc);
-    for (int i = 0; i < argc; i++) {
-        printf("Arg %d: %s\n", i, argv[i]);
+    // Debug print out the number and the arguments
+    if (debug){
+        printf("Number of args: %d\n", argc);
+        for (int i = 0; i < argc; i++) {
+            printf("Arg %d: %s\n", i, argv[i]);
+        }
     }
 
     // Declare and init background and primary Color with defaults
     Color background;
     Color primary;
-    float speed_scaler;
-    speed_scaler = 1.0f;
     background = WHITE;
     primary = BLACK;
 
-    // If a color was provided we set it as requested
+    // Delcare and init scale factor with a default of 10 (modest)
+    int scale_factor;
+    scale_factor = 10;
+
+    // Declare and init speed scaler with a default of 1x (realtime)
+    float speed_scaler;
+    speed_scaler = 1.0f;
+
+    // Debug used to hold end location of strings as their proccessed into none string data
+    char *endptr;
+
+    /* Process all our arguments as requested */
     for (int i = 1; i < argc; i++) {
+        // if a background color is requested set it
         if (strncmp(argv[i], "-BGCOLOR=", 9) == 0) {
             background = get_color_from_name(argv[i] + 9);
             printf("Background color: %s\n", argv[i] + 9);
         }
+        // else if a background color is requested set it
         else if (strncmp(argv[i], "-PCOLOR=", 8) == 0) {
             primary = get_color_from_name(argv[i] + 8);
             printf("Primary color: %s\n", argv[i] + 8);
         }
+        // else if a speed is requested set it
         else if (strncmp(argv[i], "-SPEED=", 7) == 0) {
-            const char *value_str = argv[i] + 7;  // skip "-SPEED="
 
-            char *endptr;
-            float value = strtof(value_str, &endptr);
+            // set our grab in a temp incase its bad input
+            float value = strtof(argv[i] + 7, &endptr);
 
+            // if no valid float was given but -SPEED was passed we have bad input so exit
             if (*endptr != '\0') {
                 printf("Error: -SPEED must be a valid number.\n");
                 return 1;
             }
 
+            // If speed was requested as a negative we have bad input so exit
             if (value <= 0.0f) {
                 printf("Error: -SPEED must be positive.\n");
                 return 1;
             }
 
+            // Validated data was good so set it and print to the user
             speed_scaler = value;
             printf("Speed set to %.2f\n", speed_scaler);
         }
+        // else if scale factor is requested set it
+        else if (strncmp(argv[i], "-SCALE_FACTOR=", 14) ==0) {
+
+            // set our grab in a temp incase its bad input
+            int value = strtol(argv[i] + 14, &endptr, 10);
+
+            // if no valid int was given but -SCALE_FACTOR was passed we have bad input so exit
+            if (*endptr != '\0') {
+                printf("Error: -SCALE_FACTOR must be a valid number.\n");
+                return 1;
+            }
+
+            // If scale factor was requested as a negative we have bad input so exit
+            if (value <= 0) {
+                printf("Error: -SPEED must be positive.\n");
+                return 1;
+            }
+
+            // Validated data was good so set it and print to the user
+            scale_factor = value;
+            printf("Scale factor: %s\n", argv[i] + 14);
+
+        }
+        // else if we got a debug we check if true else always false (bad input = false)
+        else if (strncmp(argv[i], "-debug=", 7) == 0) {
+            bool value = (strncmp(argv[i] + 7, "true", 4) == 0);
+
+            printf("Debug: %s\n", value ? "true" : "false");
+
+            debug = value;
+        }
+        // else if we got the walkthrough we check if true else always false (bad input = false)
+        else if (strncmp(argv[i], "-walkthrough=", 13) == 0) {
+            bool value = (strncmp(argv[i] + 13, "true", 4) == 0);
+
+            printf("Walkthrough: %s\n", value ? "true" : "false");
+
+            walk_through_each_instruction = value;
+
+        }
+        // else if we got vf_reset quirk (bad input = default)
+        else if (strncmp(argv[i], "-vf_reset=", 10) == 0) {
+            bool value = (strncmp(argv[i] + 10, "true", 4) == 0);
+
+            bool check_input = (strncmp(argv[i] + 10, "false", 5) == 0);
+
+            if (!value && !check_input) {
+                // bad input so we default
+            }
+            else if (!value && check_input) {
+                vf_reset_quirk = false;
+            }
+            else {
+                vf_reset_quirk = true;
+            }
+
+            printf("VF_Reset: %s\n", vf_reset_quirk ? "true" : "false");
+        }
+        // else if we got memory quirk (bad input = default)
+        else if (strncmp(argv[i], "-memory_quirk=", 14) == 0) {
+            bool value = (strncmp(argv[i] + 14, "true", 4) == 0);
+
+            bool check_input = (strncmp(argv[i] + 14, "false", 5) == 0);
+
+            if (!value && !check_input) {
+                // bad input so we default
+            }
+            else if (!value && check_input) {
+                memory_quirk = false;
+            }
+            else {
+                memory_quirk = true;
+            }
+
+            printf("Memory quirk: %s\n", memory_quirk ? "true" : "false");
+        }
+        // else if we got display wait quirk (bad input = default)
+        else if (strncmp(argv[i], "-display_wait=", 14) == 0) {
+            bool value = (strncmp(argv[i] + 14, "true", 4) == 0);
+
+            bool check_input = (strncmp(argv[i] + 14, "false", 5) == 0);
+
+            if (!value && !check_input) {
+                // bad input so we default
+            }
+            else if (!value && check_input) {
+                display_wait_quirk = false;
+            }
+            else {
+                display_wait_quirk = true;
+            }
+
+            printf("Display wait quirk: %s\n", display_wait_quirk ? "true" : "false");
+        }
+        // else if we got clipping quirk (bad input = default)
+        else if (strncmp(argv[i], "-clipping_quirk=", 16) == 0) {
+            bool value = (strncmp(argv[i] + 16, "true", 4) == 0);
+
+            bool check_input = (strncmp(argv[i] + 16, "false", 5) == 0);
+
+            if (!value && !check_input) {
+                // bad input so we default
+            }
+            else if (!value && check_input) {
+                clipping_quirk = false;
+            }
+            else {
+                clipping_quirk = true;
+            }
+
+            printf("clipping quirk: %s\n", clipping_quirk ? "true" : "false");
+        }
+        // else if we got shifting quirk (bad input = default)
+        else if (strncmp(argv[i], "-shifting_quirk=", 16) == 0) {
+            bool value = (strncmp(argv[i] + 16, "true", 4) == 0);
+
+            bool check_input = (strncmp(argv[i] + 16, "false", 5) == 0);
+
+            if (!value && !check_input) {
+                // bad input so we default
+            }
+            else if (!value && check_input) {
+                shifting_quirk = false;
+            }
+            else {
+                shifting_quirk = true;
+            }
+
+            printf("shifting quirk: %s\n", shifting_quirk ? "true" : "false");
+        }
+        // else if we got jumping quirk (bad input = default)
+        else if (strncmp(argv[i], "-jumping_quirk=", 15) == 0) {
+            bool value = (strncmp(argv[i] + 15, "true", 4) == 0);
+
+            bool check_input = (strncmp(argv[i] + 15, "false", 5) == 0);
+
+            if (!value && !check_input) {
+                // bad input so we default
+            }
+            else if (!value && check_input) {
+                jumping_quirk = false;
+            }
+            else {
+                jumping_quirk = true;
+            }
+
+            printf("jumping quirk: %s\n", jumping_quirk ? "true" : "false");
+        }
+
     }
 
     // last argument should always be path to chip 8 rom
@@ -197,7 +379,7 @@ int main(int argc, const char * argv[]) {
     fclose(rom);
 
     // Init the window and audio device
-    InitWindow(emulated_screen_width, emulated_screen_height, "CHIP-8 Emulator");
+    InitWindow(64 * scale_factor, 32 * scale_factor, "CHIP-8 Emulator");
     InitAudioDevice();
 
     // Load sound file for our chip 8's emulated sound
@@ -289,8 +471,7 @@ int main(int argc, const char * argv[]) {
 
         // Debug statements
         if (debug){
-            printf("On instruction: 0x%04X\n", chip_8_instance.PC);
-            printf("0x%04X\n", instruction);
+            printf("On instruction address: 0x%04X, which is: 0x%04X\n", chip_8_instance.PC, instruction);
         }
 
         // If our time register is not 0 and we aren't currently playing a sound then we do play a sound
@@ -410,6 +591,12 @@ int main(int argc, const char * argv[]) {
                         if (debug){
                             printf("Set V[%d] to the or operation of V[%d] | V[%d]\n", ((instruction & 0x0F00) >> 8), ((instruction & 0x0F00) >> 8), ((instruction & 0x00F0) >> 4));
                         }
+                        if (vf_reset_quirk){
+                            chip_8_instance.V[15] = 0;
+                            if (debug) {
+                                printf("Reset flag register V[15]\n");
+                            }
+                        }
                         break;
 
                     // Binary And operation
@@ -418,6 +605,12 @@ int main(int argc, const char * argv[]) {
                         if (debug){
                             printf("Set V[%d] to the and operation of V[%d] & V[%d]\n", ((instruction & 0x0F00) >> 8), ((instruction & 0x0F00) >> 8), ((instruction & 0x00F0) >> 4));
                         }
+                        if (vf_reset_quirk){
+                            chip_8_instance.V[15] = 0;
+                            if (debug) {
+                                printf("Reset flag register V[15]\n");
+                            }
+                        }
                         break;
 
                     // Binary XOR operation
@@ -425,6 +618,12 @@ int main(int argc, const char * argv[]) {
                         chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x0F00) >> 8] ^ chip_8_instance.V[(instruction & 0x00F0) >> 4];
                         if (debug){
                             printf("Set V[%d] to the XOR operation of V[%d] ^ V[%d]\n", ((instruction & 0x0F00) >> 8), ((instruction & 0x0F00) >> 8), ((instruction & 0x00F0) >> 4));
+                        }
+                        if (vf_reset_quirk){
+                            chip_8_instance.V[15] = 0;
+                            if (debug) {
+                                printf("Reset flag register V[15]\n");
+                            }
                         }
                         break;
 
@@ -482,8 +681,18 @@ int main(int argc, const char * argv[]) {
                         else{
                             temporary_u8 = 0;
                         }
-                        chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x0F00) >> 8] >> 1;
-                        chip_8_instance.V[15] = temporary_u8;
+                        if (shifting_quirk) {
+                            chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x0F00) >> 8] >> 1;
+                            chip_8_instance.V[15] = temporary_u8;
+                        }
+                        else {
+                            chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x00F0) >> 4] >> 1;
+                            chip_8_instance.V[15] = chip_8_instance.V[(instruction & 0X00F0) >> 4] & 0b00000001;
+                        }
+
+                        if (debug){
+                            printf("Shifted V[%d] by 1 bit to the right, shifted out %d into V[F]\n", (instruction & 0x0F00) >> 8, chip_8_instance.V[15]);
+                        }
                         break;
 
                     // Shift V[X] by 1 bit (left) if the bit shifted out was 1 set V[F] to 1 else set it to 0
@@ -495,76 +704,114 @@ int main(int argc, const char * argv[]) {
                         else{
                             temporary_u8 = 0;
                         }
-                        chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x0F00) >> 8] << 1;
-                        chip_8_instance.V[15] = temporary_u8;
+                        if (shifting_quirk) {
+                            chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x0F00) >> 8] << 1;
+                            chip_8_instance.V[15] = temporary_u8;
+                        }
+                        else {
+                            chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.V[(instruction & 0x00F0) >> 4] << 1;
+                            chip_8_instance.V[15] = (chip_8_instance.V[(instruction & 0X00F0) >> 4] & 0b10000000) >> 7;
+                        }
+
+                        if (debug){
+                            printf("Shifted V[%d] by 1 bit to the left, shifted out %d into V[F]\n", (instruction & 0x0F00) >> 8, chip_8_instance.V[15]);
+                        }
                         break;
 
                 }
                 break;
 
-            // Skip 1 instruction if Vx and Vy are equal
+            // Skip 1 instruction if Vx and Vy are not equal
             case 0x9:
                 if (chip_8_instance.V[(instruction & 0x0F00) >> 8] != chip_8_instance.V[(instruction & 0x00F0) >> 4]){
                     chip_8_instance.PC += 2;
                 }
-                //printf("Checked if V[%d] = 0x%02X is not equal to V[%d] = 0x%02X\n", ((instruction & 0x0F00) >> 8), chip_8_instance.V[(instruction & 0x0F00) >> 8], ((instruction & 0x00F0) >> 4), chip_8_instance.V[(instruction & 0x00F0) >> 4]);
+                if (debug){
+                    printf("If V[%d] = 0x%02X is not equal to V[%d] = 0x%02X skip an instruction\n", ((instruction & 0x0F00) >> 8), chip_8_instance.V[(instruction & 0x0F00) >> 8], ((instruction & 0x00F0) >> 4), chip_8_instance.V[(instruction & 0x00F0) >> 4]);
+                }
                 break;
 
             // Set the index register to NNN
             case 0xA:
                 chip_8_instance.I = (instruction & 0x0FFF);
-                //printf("Set I to 0x%03X\n", chip_8_instance.I);
+                if (debug){
+                    printf("Set I to 0x%03X\n", chip_8_instance.I);
+                }
+
                 break;
 
             // Jump with an offset (original implementation)
             case 0xB:
-               chip_8_instance.PC = (instruction & 0x0FFF) + chip_8_instance.V[0];
+                if (jumping_quirk) {
+                    chip_8_instance.PC = (instruction & 0x0FFF) + chip_8_instance.V[(instruction & 0X0F00) >> 8];
+                }
+                else {
+                    chip_8_instance.PC = (instruction & 0x0FFF) + chip_8_instance.V[0];
+                }
+               if (debug){
+                   printf("Jump to %d\n", chip_8_instance.PC);
+               }
                break;
 
             // Get a random value (0 - 255 inclusive) then binary and it with the two last nibbles of the instruction
             case 0xC:
                chip_8_instance.V[(instruction & 0x0F00) >> 8] = GetRandomValue(0, 255) & (instruction & 0x00FF);
+               if (debug){
+                   printf("Got a random int: %d\n", (GetRandomValue(0, 255) & (instruction & 0x00FF)));
+               }
                break;
 
             // Case of us writting a sprite to the screen
             case 0xD:
-                // DXYN
-                // set the X coordinate to the value in VX (V register N number) modulo 64
-                x_coordinate = chip_8_instance.V[(instruction & 0x0F00) >> 8] & 63;
-                y_coordinate = chip_8_instance.V[(instruction & 0x00F0) >> 4] & 31;
-                chip_8_instance.V[15] = 0;
+                if (chip_8_instance.display_wait_timer == 0){
 
-                // For N pixels
-                for (int i = 0; i < (instruction & 0x000F); i++){
-                    // Grab the sprite data
-                    u8 sprite_data = chip_8_instance.memory[chip_8_instance.I + i];
-                    // Until we're at the edge or we have reached the end of what to read
-                    for(int j = 0; j < 8 && (x_coordinate + j) < 64; j++){
-                        // if the bit working from left to right is 1
-                        if ((sprite_data & (0x80 >> j)) != 0){
-                            // Get the emulated displays index
-                            int display_index = y_coordinate * chip_8_screen_width + x_coordinate + j;
+                    // DXYN
+                    // set the X coordinate to the value in VX (V register N number) modulo 64
+                    x_coordinate = chip_8_instance.V[(instruction & 0x0F00) >> 8] & 63;
+                    y_coordinate = chip_8_instance.V[(instruction & 0x00F0) >> 4] & 31;
+                    chip_8_instance.V[15] = 0;
 
-                            // If that pixel is 1 then we set it to 0 and set V[F] to 1
-                            if (chip_8_instance.display[display_index]){
-                                chip_8_instance.display[display_index] = 0;
-                                chip_8_instance.V[15] = 1;
+
+                    for (int i = 0; i < (instruction & 0x000F); i++) {
+                        u8 sprite_data = chip_8_instance.memory[chip_8_instance.I + i];
+                        // wrap
+                        int y = (y_coordinate + i) % chip_8_screen_height;
+                        // if we're not supposed to wrap break if we would
+                        if (clipping_quirk && (y_coordinate + i) > chip_8_screen_height) {
+                            break;
+                        }
+
+                        for (int j = 0; j < 8; j++) {
+                            // wrap
+                            int x = (x_coordinate + j) % chip_8_screen_width;
+                            // if we're not supposed to wrap break if we would
+                            if (clipping_quirk && (x_coordinate + j) > chip_8_screen_width) {
+                                break;
                             }
-                            // Else we just set that pixel to 1
-                            else{
-                                chip_8_instance.display[display_index] = 1;
+                            if (sprite_data & (0x80 >> j)) {
+                                int display_index = y * chip_8_screen_width + x;
+                                if (chip_8_instance.display[display_index]) {
+                                    chip_8_instance.display[display_index] = 0;
+                                    chip_8_instance.V[15] = 1;
+                                } else {
+                                    chip_8_instance.display[display_index] = 1;
+                                }
                             }
                         }
                     }
-                    // Increment y
-                    y_coordinate += 1;
-                    // If we're ad the end of our Y max break out
-                    if (y_coordinate == 32){
-                        break;
+                    chip_8_instance.display_has_changed = true;
+
+                    if (display_wait_quirk) {
+                        chip_8_instance.display_wait_timer += 1;
                     }
 
+                    if (debug){
+                        printf("Wrote %d tall sprite at X = %d and Y = %d\n", (instruction & 0X00F), (instruction & 0x0F00) >> 8, (instruction & 0x00F0) >> 4);
+                    }
                 }
-                chip_8_instance.display_has_changed = true;
+                else {
+                    chip_8_instance.PC -= 2;
+                }
                 break;
 
             // Cases for input (that aren't blocking)
@@ -576,26 +823,38 @@ int main(int argc, const char * argv[]) {
                         PollInputEvents();
                         temporary_u8 = chip_8_instance.V[(instruction & 0x0F00) >> 8];
                         current_key_pressed = get_most_recent_input(&chip_8_instance);
-                        //printf("Character given was 0x%01X\n", current_key_pressed);
+
                         if (temporary_u8 == current_key_pressed) {  // check the correct key
                             chip_8_instance.PC += 2;
                         }
+
+                        if (debug){
+                            printf("Skip if 0x%01X == 0x%01X\n", temporary_u8, current_key_pressed);
+                        }
+
                         break;
                     }
                     // Skip if key in Vx is NOT pressed
                     case 0xA1: {
+                        PollInputEvents();
                         temporary_u8 = chip_8_instance.V[(instruction & 0x0F00) >> 8];
                         current_key_pressed = get_most_recent_input(&chip_8_instance);
-                        //printf("Character given was 0x%01X\n", current_key_pressed);
+
                         if (!((temporary_u8 == current_key_pressed) && (temporary_u8 != 0xFF))) {
                             chip_8_instance.PC += 2;
                         }
+
+                        if (debug){
+                            printf("Skip if 0x%01X != 0x%01X\n", temporary_u8, current_key_pressed);
+                        }
+
                         break;
                     }
                 }
 
-
                break;
+
+
             // Opcodes for timers, setting, and reading
             case 0xF:
                 // switch on the last byte
@@ -603,32 +862,54 @@ int main(int argc, const char * argv[]) {
                     // Set V[X] to the current value of our delay_register (timer)
                     case 0x07:
                         chip_8_instance.V[(instruction & 0x0F00) >> 8] = chip_8_instance.delay_register;
+                        if (debug){
+                            printf("Set %d to the delay_registers value of %d\n", (instruction & 0x0F00) >> 8, chip_8_instance.delay_register);
+                        }
                         break;
                     // Set the delay_register (timer) to V[X]
                     case 0x15:
                         chip_8_instance.delay_register = chip_8_instance.V[(instruction & 0x0F00) >> 8];
+                        if (debug){
+                            printf("Set delay register to V[%d] = %d\n", (instruction & 0x0F00) >> 8, chip_8_instance.V[(instruction & 0x0F00) >> 8]);
+                        }
                         break;
                     // Set the sound_register (timer for sound) to V[X]
                     case 0x18:
                         chip_8_instance.sound_register = chip_8_instance.V[(instruction & 0x0F00) >> 8];
+                        if (debug){
+                            printf("Set sound register to V[%d] = %d\n", (instruction & 0x0F00) >> 8, chip_8_instance.V[(instruction & 0x0F00) >> 8]);
+                        }
                         break;
                     // Add V[X] to our index register (ambiguous behavior)
                     case 0x1E:
                         chip_8_instance.I += chip_8_instance.V[(instruction & 0x0F00) >> 8];
+                        if (debug){
+                            printf("Add V[%d] to index register\n", (instruction & 0x0F00) >> 8);
+                        }
                         break;
                     // Get a key blocking until a key is recieved
                     case 0x0A:
+                        PollInputEvents();
                         temporary_u8 = get_most_recent_input(&chip_8_instance);
                         if (temporary_u8 != 0xFF){
                             chip_8_instance.V[(instruction & 0xF00) >> 8] = temporary_u8;
+                            if (debug){
+                                printf("Got input: 0x%01X\n", temporary_u8);
+                            }
                         }
                         else{
                             chip_8_instance.PC -= 2;
+                            if (debug){
+                                printf("Waiting for input\n");
+                            }
                         }
                         break;
                     // Set our index register to the requested font V[X]
                     case 0x29:
                         chip_8_instance.I = 0x50 + (chip_8_instance.V[(instruction & 0x0F00) >> 8] * 5);
+                        if (debug){
+                            printf("Setting index register to font: 0x%01X\n", chip_8_instance.V[(instruction & 0x0F00) >> 8]);
+                        }
                         break;
                     // Binary-Coded decimal conversion i = (V[X] / 100), i + 1 = (V[X] % 100) / 10, i + 2 = (V[X] % 10)
                     // AKA we take each digit of of V[X] and place them individually in I incrementing for each digit
@@ -637,6 +918,15 @@ int main(int argc, const char * argv[]) {
                         chip_8_instance.memory[chip_8_instance.I] = temporary_u8 / 100;
                         chip_8_instance.memory[chip_8_instance.I + 1] = (temporary_u8 % 100) / 10;
                         chip_8_instance.memory[chip_8_instance.I + 2] = (temporary_u8 % 10);
+
+                        if (debug){
+                            printf("BCD - Start\n");
+                            printf("Memory address[%d] = (V[%d] / 100) = %d\n", chip_8_instance.I, (instruction & 0x0F00) >> 8, chip_8_instance.memory[chip_8_instance.I]);
+                            printf("Memory address[%d] = (V[%d] %% 100) / 10 = %d\n", chip_8_instance.I + 1, (instruction & 0x0F00) >> 8, chip_8_instance.memory[chip_8_instance.I + 1]);
+                            printf("Memmory address[%d] = (V[%d] %% 10) = %d\n", chip_8_instance.I + 2, (instruction & 0x0F00) >> 8, chip_8_instance.memory[chip_8_instance.I + 2]);
+                            printf("BCD - End\n");
+                        }
+
                         break;
                     // We change our emulated memory to the registers from 0 to X
                     // AKA overwrite our emulated memory starting at i with V[0] till i + x = V[X]
@@ -644,6 +934,12 @@ int main(int argc, const char * argv[]) {
                         temporary_u8 = ((instruction & 0x0F00) >> 8);
                         for( u8 i = 0; i <= temporary_u8; i++){
                             chip_8_instance.memory[chip_8_instance.I + i] = chip_8_instance.V[i];
+                            if (debug) {
+                                printf("Overwriting memory address[%d] with %d\n", chip_8_instance.I + i,  chip_8_instance.V[i]);
+                            }
+                        }
+                        if (memory_quirk){
+                            chip_8_instance.I += 1;
                         }
                         break;
                     // We change our emulated registers to the memory from 0 to X
@@ -652,6 +948,12 @@ int main(int argc, const char * argv[]) {
                         temporary_u8 = ((instruction & 0x0F00) >> 8);
                         for( u8 i = 0; i <= temporary_u8; i++){
                             chip_8_instance.V[i] = chip_8_instance.memory[chip_8_instance.I + i];
+                            if (debug) {
+                                printf("Overwriting V[%x] with memory address[%d]\n", i, chip_8_instance.I);
+                            }
+                        }
+                        if (memory_quirk){
+                            chip_8_instance.I += 1;
                         }
                         break;
                 }
@@ -694,7 +996,7 @@ int main(int argc, const char * argv[]) {
          if (time_has_passed(&when_next_frame)){
             // Prep buffer for editing
             BeginDrawing();
-            draw_frame(&chip_8_instance, &primary, &background);
+            draw_frame(&chip_8_instance, scale_factor, &primary, &background);
             // Draw the edited buffer to the screen
             EndDrawing();
             // Update for when we should print another frame
@@ -762,4 +1064,5 @@ int main(int argc, const char * argv[]) {
     // Close the window
     CloseWindow();
     return 0;
+
 }

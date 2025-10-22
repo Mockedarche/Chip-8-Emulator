@@ -38,6 +38,7 @@ void pretty_timer(bool reset) {
     printf("Time since last call: %.3f ms\n", elapsed_ms);
 
     last_call = now;
+
 }
 
 /*
@@ -69,6 +70,7 @@ void sleep_for_instruction(float time_per_instruction_ms) {
     }
 
     clock_gettime(CLOCK_MONOTONIC, &last_time);
+
 }
 
 /*
@@ -87,6 +89,7 @@ struct timespec make_future_time(double ms) {
         t.tv_nsec %= 1000000000;
     }
     return t;
+
 }
 
 /*
@@ -102,6 +105,7 @@ bool time_has_passed(struct timespec *target) {
     if (now.tv_sec > target->tv_sec) return true;
     if (now.tv_sec == target->tv_sec && now.tv_nsec >= target->tv_nsec) return true;
     return false;
+
 }
 
 /*
@@ -134,6 +138,7 @@ int track_instructions() {
         return(temp);
     }
     return 0;
+
 }
 
 /*
@@ -148,4 +153,5 @@ int millis_since(struct timespec start) {
     long diff_ms = (now.tv_sec - start.tv_sec) * 1000;
     diff_ms += (now.tv_nsec - start.tv_nsec) / 1000000;
     return (int)diff_ms;
+
 }
